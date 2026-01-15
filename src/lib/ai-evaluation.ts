@@ -37,7 +37,7 @@ const EvaluationSchema = z.object({
 const ApplicantInfoSchema = z.object({
     name: z.string().describe('Full name of the applicant'),
     email: z.string().describe('Email address of the applicant'),
-    phone: z.string().optional().describe('Phone number if found')
+    phone: z.string().nullable().describe('Phone number if found, otherwise null')
 })
 
 type EvaluationResult = z.infer<typeof EvaluationSchema>
@@ -65,7 +65,7 @@ interface JobData {
 }
 
 // Use AI to extract applicant info from email content
-export async function extractApplicantInfo(emailBody: string, emailSubject: string): Promise<{ name: string; email: string; phone?: string } | null> {
+export async function extractApplicantInfo(emailBody: string, emailSubject: string): Promise<{ name: string; email: string; phone?: string | null } | null> {
     if (!emailBody && !emailSubject) {
         return null
     }
