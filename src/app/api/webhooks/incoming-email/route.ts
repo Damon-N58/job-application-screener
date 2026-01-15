@@ -46,7 +46,7 @@ function parseFromAddress(from: string): { name: string; email: string } {
     }
 }
 
-// Try to match email subject to a job
+// Try to match email subject to a job - LENIENT: any email is an application
 async function matchToJob(supabase: ReturnType<typeof getAdminClient>, subject: string) {
     console.log('🔍 Looking for matching job for subject:', subject)
 
@@ -55,6 +55,7 @@ async function matchToJob(supabase: ReturnType<typeof getAdminClient>, subject: 
         .from('jobs')
         .select('id, title')
         .eq('status', 'active')
+        .order('created_at', { ascending: false })
 
     if (error) {
         console.error('Error fetching jobs:', error)
@@ -68,28 +69,26 @@ async function matchToJob(supabase: ReturnType<typeof getAdminClient>, subject: 
         return null
     }
 
-    // Simple matching: check if job title appears in subject
-    const subjectLower = subject.toLowerCase()
-    for (const job of jobs) {
-        const titleLower = job.title.toLowerCase()
-        // Check if any significant word from title is in subject
-        const titleWords = titleLower.split(' ').filter(w => w.length > 3)
-        for (const word of titleWords) {
-            if (subjectLower.includes(word)) {
-                console.log(`✅ Matched job "${job.title}" via word "${word}"`)
-                return job.id
+    // Try to match by subject first (if subject exists and is meaningful)
+    if (subject && subject !== 'No Subject' && subject.length > 3) {
+        const subjectLower = subject.toLowerCase()
+        for (const job of jobs) {
+            const titleLower = job.title.toLowerCase()
+            // Check if any significant word from title is in subject
+            const titleWords = titleLower.split(' ').filter(w => w.length > 3)
+            for (const word of titleWords) {
+                if (subjectLower.includes(word)) {
+                    console.log(`✅ Matched job "${job.title}" via word "${word}"`)
+                    return job.id
+                }
             }
         }
     }
 
-    // If no match and only one active job, default to it
-    if (jobs.length === 1) {
-        console.log(`📌 Defaulting to only active job: ${jobs[0].title}`)
-        return jobs[0].id
-    }
-
-    console.log('❌ No matching job found')
-    return null
+    // LENIENT: If no subject match, default to the most recent active job
+    // ALL emails to this address are job applications
+    console.log(`📌 Defaulting to most recent job: ${jobs[0].title}`)
+    return jobs[0].id
 }
 
 export async function POST(req: Request) {
