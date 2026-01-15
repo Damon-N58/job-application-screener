@@ -1,4 +1,4 @@
-import { generateObject } from 'ai'
+import { generateObject, generateText } from 'ai'
 import { openai } from '@ai-sdk/openai'
 import { z } from 'zod'
 import { createClient } from '@supabase/supabase-js'
@@ -33,6 +33,13 @@ const EvaluationSchema = z.object({
     culturalFitScore: z.number().min(0).max(100).describe('Cultural fit score from 0-100')
 })
 
+// Schema for extracting applicant info from email
+const ApplicantInfoSchema = z.object({
+    name: z.string().describe('Full name of the applicant'),
+    email: z.string().describe('Email address of the applicant'),
+    phone: z.string().optional().describe('Phone number if found')
+})
+
 type EvaluationResult = z.infer<typeof EvaluationSchema>
 
 interface JobPersona {
@@ -57,6 +64,38 @@ interface JobData {
     aiPersona: JobPersona
 }
 
+// Use AI to extract applicant info from email content
+export async function extractApplicantInfo(emailBody: string, emailSubject: string): Promise<{ name: string; email: string; phone?: string } | null> {
+    if (!emailBody && !emailSubject) {
+        return null
+    }
+
+    try {
+        console.log('🔍 Extracting applicant info with AI...')
+
+        const { object } = await generateObject({
+            model: openai('gpt-4o-mini'), // Use mini for faster extraction
+            prompt: `Extract the job applicant's contact information from this email.
+
+Subject: ${emailSubject}
+
+Email Content:
+${emailBody}
+
+If you cannot find the name, look for signatures, greetings, or any identifying info.
+If you cannot find an email, use "unknown@email.com".
+If looking at a forwarded email, extract the ORIGINAL sender's info, not the forwarder.`,
+            schema: ApplicantInfoSchema,
+        })
+
+        console.log(`✅ Extracted: ${object.name} <${object.email}>`)
+        return object
+    } catch (error) {
+        console.error('Error extracting applicant info:', error)
+        return null
+    }
+}
+
 export async function evaluateApplicant(
     applicant: ApplicantData,
     job: JobData
@@ -65,37 +104,55 @@ export async function evaluateApplicant(
 
     try {
         console.log(`🤖 Starting AI evaluation for ${applicant.name}...`)
+        console.log(`📧 Email body length: ${applicant.emailBody?.length || 0}`)
+        console.log(`📄 Resume URL: ${applicant.resumeUrl || 'none'}`)
 
-        // Build the resume content
-        let resumeContent = ''
+        // Check if OpenAI API key is set
+        if (!process.env.OPENAI_API_KEY) {
+            console.error('❌ OPENAI_API_KEY is not set!')
+            throw new Error('OpenAI API key not configured')
+        }
 
-        // If there's a resume URL, we'll include it in the prompt
-        // GPT-4o can read PDF URLs directly
+        // Build the content for evaluation
+        let candidateContent = ''
+
+        // Add email body - this is the main content we can process
+        if (applicant.emailBody && applicant.emailBody.trim()) {
+            candidateContent += `Application Email Content:\n${applicant.emailBody}\n\n`
+        }
+
+        // Note about resume - we can't fetch URLs from OpenAI
         if (applicant.resumeUrl) {
-            resumeContent = `Resume URL: ${applicant.resumeUrl}\n\nPlease analyze the resume at this URL.`
+            candidateContent += `Note: A resume PDF was attached but cannot be analyzed directly. Please evaluate based on the email content.\n`
         }
 
-        // Add email body if available
-        if (applicant.emailBody) {
-            resumeContent += `\n\nApplication Email:\n${applicant.emailBody}`
-        }
-
-        if (!resumeContent.trim()) {
-            console.log(`⚠️ No resume or email content for ${applicant.name}`)
-            return null
+        if (!candidateContent.trim()) {
+            console.log(`⚠️ No content available for evaluation`)
+            // Still create a basic evaluation
+            candidateContent = 'No application content available. The applicant submitted an empty application.'
         }
 
         // Build the evaluation prompt
         const systemPrompt = `You are an expert HR recruiter and talent evaluator. Your job is to evaluate job applicants against specific criteria.
 
-Analyze the candidate's resume and application materials carefully. Be thorough but fair in your assessment.
+Analyze the candidate's application materials carefully. Be thorough but fair in your assessment.
 
 For scoring:
 - 85-100: Exceptional match, strongly recommend
 - 70-84: Good match, worth interviewing
 - 50-69: Moderate match, consider if limited candidates
 - 30-49: Weak match, significant gaps
-- 0-29: Poor match, does not meet requirements`
+- 0-29: Poor match, does not meet requirements
+
+If information is missing or limited, score conservatively and note the gaps in red flags.`
+
+        const mustHavesList = job.aiPersona.mustHaves?.length
+            ? job.aiPersona.mustHaves.map((r: string, i: number) => `${i + 1}. ${r}`).join('\n')
+            : 'None specified'
+
+        const niceToHavesList = job.aiPersona.niceToHaves?.length
+            ? job.aiPersona.niceToHaves.map((r: string, i: number) => `${i + 1}. ${r}`).join('\n')
+            : 'None specified'
 
         const userPrompt = `Evaluate this candidate for the following position:
 
@@ -106,10 +163,10 @@ For scoring:
 ${job.description}
 
 **Must-Have Requirements:**
-${job.aiPersona.mustHaves.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+${mustHavesList}
 
 **Nice-to-Have Qualifications:**
-${job.aiPersona.niceToHaves.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+${niceToHavesList}
 
 **Cultural Fit Description:**
 ${job.aiPersona.culturalFit || 'Not specified'}
@@ -120,11 +177,13 @@ ${job.aiPersona.culturalFit || 'Not specified'}
 Name: ${applicant.name}
 Email: ${applicant.email}
 
-${resumeContent}
+${candidateContent}
 
 ---
 
 Provide a comprehensive evaluation of this candidate against all the requirements.`
+
+        console.log('📤 Sending to OpenAI...')
 
         // Call GPT-4o for evaluation
         const { object: evaluation } = await generateObject({
@@ -174,9 +233,10 @@ Provide a comprehensive evaluation of this candidate against all the requirement
         return evaluation
 
     } catch (error) {
-        console.error('AI evaluation error:', error)
+        console.error('❌ AI evaluation error:', error)
+        console.error('Error details:', error instanceof Error ? error.message : 'Unknown error')
 
-        // Mark as failed (keep as analyzing for retry)
+        // Mark as incoming for retry
         await supabase
             .from('applicants')
             .update({ status: 'incoming' })
@@ -188,26 +248,28 @@ Provide a comprehensive evaluation of this candidate against all the requirement
 
 // Evaluate an applicant by their ID
 export async function evaluateApplicantById(applicantId: string): Promise<EvaluationResult | null> {
+    console.log(`🔄 evaluateApplicantById called for: ${applicantId}`)
+
     const supabase = getAdminClient()
 
     // Fetch applicant with their job
     const { data: applicant, error: appError } = await supabase
         .from('applicants')
         .select(`
-      id,
-      name,
-      email,
-      email_body,
-      resume_url,
-      job_id,
-      jobs (
-        id,
-        title,
-        department,
-        description,
-        ai_persona
-      )
-    `)
+            id,
+            name,
+            email,
+            email_body,
+            resume_url,
+            job_id,
+            jobs (
+                id,
+                title,
+                department,
+                description,
+                ai_persona
+            )
+        `)
         .eq('id', applicantId)
         .single()
 
@@ -215,6 +277,8 @@ export async function evaluateApplicantById(applicantId: string): Promise<Evalua
         console.error('Error fetching applicant:', appError)
         return null
     }
+
+    console.log(`📋 Fetched applicant: ${applicant.name}, email_body: ${applicant.email_body?.substring(0, 100)}...`)
 
     const job = Array.isArray(applicant.jobs) ? applicant.jobs[0] : applicant.jobs
 

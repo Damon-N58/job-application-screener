@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { evaluateApplicantById } from '@/lib/ai-evaluation'
+import { evaluateApplicantById, extractApplicantInfo } from '@/lib/ai-evaluation'
 
 // Create admin client for server-side operations
 function getAdminClient() {
@@ -169,10 +169,24 @@ export async function POST(req: Request) {
 
         // Extract sender info
         const fromHeader = headers.From || headers.from || (envelope as Record<string, string>).from || ''
-        const { name, email } = parseFromAddress(fromHeader)
+        let { name, email } = parseFromAddress(fromHeader)
         const subject = headers.Subject || headers.subject || 'No Subject'
 
-        console.log(`📧 From: ${name} <${email}>`)
+        console.log(`📧 Raw From Header: ${fromHeader}`)
+        console.log(`📧 Parsed: ${name} <${email}>`)
+
+        // If name/email is unknown or this looks like a forward, try AI extraction
+        if (name === 'Unknown' || email.includes('unknown') || plain.includes('Forwarded message')) {
+            console.log('🤔 Applicant info unclear or forwarded - attempting AI extraction...')
+            const extracted = await extractApplicantInfo(plain || html, subject)
+            if (extracted) {
+                console.log(`✨ AI Extracted: ${extracted.name} <${extracted.email}>`)
+                name = extracted.name
+                email = extracted.email
+            }
+        }
+
+        console.log(`📧 Final Applicant: ${name} <${email}>`)
         console.log(`📧 Subject: ${subject}`)
         console.log(`📧 Attachments: ${attachments.length}`)
         console.log(`📧 Plain text length: ${plain.length}`)
