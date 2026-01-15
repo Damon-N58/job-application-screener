@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { evaluateApplicantById } from '@/lib/ai-evaluation'
 
 // Create admin client for server-side operations
 function getAdminClient() {
@@ -183,7 +184,7 @@ export async function POST(req: Request) {
                 job_id: jobId,
                 name,
                 email,
-                status: 'incoming',
+                status: 'analyzing', // Start in analyzing state
                 source: 'email',
                 source_detail: 'CloudMailin: 99e40646fb2e27d8b27e@cloudmailin.net',
                 email_subject: subject,
@@ -204,16 +205,23 @@ export async function POST(req: Request) {
 
         console.log(`✅ New applicant created: ${newApplicant.id}`)
 
-        // TODO: Trigger AI evaluation here
-        // For now, we'll just mark as 'analyzing' 
-        await supabase
-            .from('applicants')
-            .update({ status: 'analyzing' })
-            .eq('id', newApplicant.id)
+        // Trigger AI evaluation (async - don't wait for it to complete)
+        // This runs in the background so the webhook can return quickly
+        evaluateApplicantById(newApplicant.id)
+            .then(result => {
+                if (result) {
+                    console.log(`🤖 AI evaluation complete for ${name}: Score ${result.score}`)
+                } else {
+                    console.log(`⚠️ AI evaluation failed for ${name}`)
+                }
+            })
+            .catch(err => {
+                console.error('AI evaluation error:', err)
+            })
 
         return NextResponse.json({
             success: true,
-            message: 'Application received',
+            message: 'Application received, AI evaluation started',
             applicant_id: newApplicant.id,
             job_id: jobId
         })
