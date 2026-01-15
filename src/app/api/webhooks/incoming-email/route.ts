@@ -4,8 +4,13 @@ import { evaluateApplicantById } from '@/lib/ai-evaluation'
 
 // Create admin client for server-side operations
 function getAdminClient() {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+    if (!supabaseUrl || !supabaseServiceKey) {
+        throw new Error('Missing Supabase environment variables')
+    }
+
     return createClient(supabaseUrl, supabaseServiceKey, {
         auth: {
             autoRefreshToken: false,
@@ -14,34 +19,12 @@ function getAdminClient() {
     })
 }
 
-interface CloudMailinAttachment {
-    file_name: string
-    content_type: string
-    content: string // Base64 encoded
-    size: number
-}
-
-interface CloudMailinPayload {
-    envelope: {
-        to: string
-        from: string
-        helo_domain: string
-        remote_ip: string
-    }
-    headers: {
-        Subject: string
-        From: string
-        To: string
-        Date: string
-        [key: string]: string
-    }
-    plain: string
-    html: string
-    attachments: CloudMailinAttachment[]
-}
-
 // Extract name and email from "Name <email@domain.com>" format
 function parseFromAddress(from: string): { name: string; email: string } {
+    if (!from) {
+        return { name: 'Unknown', email: 'unknown@example.com' }
+    }
+
     const match = from.match(/^(.+?)\s*<(.+?)>$/)
     if (match) {
         return {
@@ -50,83 +33,163 @@ function parseFromAddress(from: string): { name: string; email: string } {
         }
     }
     // Just an email address
+    const emailMatch = from.match(/[\w.-]+@[\w.-]+\.\w+/)
+    if (emailMatch) {
+        return {
+            name: from.split('@')[0].replace(/[<>]/g, ''),
+            email: emailMatch[0].toLowerCase()
+        }
+    }
     return {
-        name: from.split('@')[0],
+        name: from.split('@')[0] || 'Unknown',
         email: from.toLowerCase()
     }
 }
 
 // Try to match email subject to a job
 async function matchToJob(supabase: ReturnType<typeof getAdminClient>, subject: string) {
+    console.log('🔍 Looking for matching job for subject:', subject)
+
     // Get all active jobs
-    const { data: jobs } = await supabase
+    const { data: jobs, error } = await supabase
         .from('jobs')
         .select('id, title')
         .eq('status', 'active')
 
-    if (!jobs || jobs.length === 0) return null
+    if (error) {
+        console.error('Error fetching jobs:', error)
+        return null
+    }
+
+    console.log('📋 Found active jobs:', jobs?.map(j => j.title))
+
+    if (!jobs || jobs.length === 0) {
+        console.log('❌ No active jobs found')
+        return null
+    }
 
     // Simple matching: check if job title appears in subject
     const subjectLower = subject.toLowerCase()
     for (const job of jobs) {
-        if (subjectLower.includes(job.title.toLowerCase())) {
-            return job.id
+        const titleLower = job.title.toLowerCase()
+        // Check if any significant word from title is in subject
+        const titleWords = titleLower.split(' ').filter(w => w.length > 3)
+        for (const word of titleWords) {
+            if (subjectLower.includes(word)) {
+                console.log(`✅ Matched job "${job.title}" via word "${word}"`)
+                return job.id
+            }
         }
     }
 
     // If no match and only one active job, default to it
     if (jobs.length === 1) {
+        console.log(`📌 Defaulting to only active job: ${jobs[0].title}`)
         return jobs[0].id
     }
 
-    // No match found
+    console.log('❌ No matching job found')
     return null
 }
 
 export async function POST(req: Request) {
+    console.log('📧 CloudMailin webhook received')
+
     try {
-        // Parse the multipart form data from CloudMailin
-        const formData = await req.formData()
+        // Check content type
+        const contentType = req.headers.get('content-type') || ''
+        console.log('Content-Type:', contentType)
 
-        // CloudMailin sends data as form fields
-        const envelope = JSON.parse(formData.get('envelope') as string || '{}')
-        const headers = JSON.parse(formData.get('headers') as string || '{}')
-        const plain = formData.get('plain') as string || ''
-        const html = formData.get('html') as string || ''
+        let envelope: Record<string, unknown> = {}
+        let headers: Record<string, string> = {}
+        let plain = ''
+        let html = ''
+        let attachments: Array<{ file_name: string; content_type: string; content: string; size: number }> = []
 
-        // Get attachments
-        const attachments: CloudMailinAttachment[] = []
-        for (const [key, value] of formData.entries()) {
-            if (key.startsWith('attachments[')) {
-                if (value instanceof File) {
-                    const buffer = await value.arrayBuffer()
-                    attachments.push({
-                        file_name: value.name,
-                        content_type: value.type,
-                        content: Buffer.from(buffer).toString('base64'),
-                        size: value.size
-                    })
+        // CloudMailin can send as multipart/form-data or application/json
+        if (contentType.includes('multipart/form-data')) {
+            console.log('📄 Parsing as multipart/form-data')
+            const formData = await req.formData()
+
+            // Log all form fields for debugging
+            console.log('Form fields received:', Array.from(formData.keys()))
+
+            // CloudMailin sends data as form fields
+            const envelopeStr = formData.get('envelope') as string
+            const headersStr = formData.get('headers') as string
+
+            if (envelopeStr) envelope = JSON.parse(envelopeStr)
+            if (headersStr) headers = JSON.parse(headersStr)
+            plain = formData.get('plain') as string || ''
+            html = formData.get('html') as string || ''
+
+            // Get attachments
+            for (const [key, value] of formData.entries()) {
+                if (key.startsWith('attachments')) {
+                    if (value instanceof File) {
+                        const buffer = await value.arrayBuffer()
+                        attachments.push({
+                            file_name: value.name,
+                            content_type: value.type,
+                            content: Buffer.from(buffer).toString('base64'),
+                            size: value.size
+                        })
+                    }
                 }
+            }
+        } else if (contentType.includes('application/json')) {
+            console.log('📄 Parsing as JSON')
+            const body = await req.json()
+            console.log('JSON body keys:', Object.keys(body))
+
+            envelope = body.envelope || {}
+            headers = body.headers || {}
+            plain = body.plain || ''
+            html = body.html || ''
+            attachments = body.attachments || []
+        } else {
+            // Try to parse as JSON anyway (CloudMailin sometimes doesn't set correct content-type)
+            console.log('📄 Unknown content type, trying JSON parse')
+            try {
+                const text = await req.text()
+                console.log('Raw body (first 500 chars):', text.substring(0, 500))
+                const body = JSON.parse(text)
+                envelope = body.envelope || {}
+                headers = body.headers || {}
+                plain = body.plain || ''
+                html = body.html || ''
+                attachments = body.attachments || []
+            } catch {
+                console.error('Failed to parse request body')
+                return NextResponse.json({
+                    success: false,
+                    error: 'Could not parse request body'
+                }, { status: 400 })
             }
         }
 
         // Extract sender info
-        const fromHeader = headers.From || headers.from || envelope.from || ''
+        const fromHeader = headers.From || headers.from || (envelope as Record<string, string>).from || ''
         const { name, email } = parseFromAddress(fromHeader)
         const subject = headers.Subject || headers.subject || 'No Subject'
 
-        console.log(`📧 Incoming email from: ${name} <${email}>`)
-        console.log(`   Subject: ${subject}`)
-        console.log(`   Attachments: ${attachments.length}`)
+        console.log(`📧 From: ${name} <${email}>`)
+        console.log(`📧 Subject: ${subject}`)
+        console.log(`📧 Attachments: ${attachments.length}`)
+        console.log(`📧 Plain text length: ${plain.length}`)
 
         const supabase = getAdminClient()
 
         // Check if we already have this applicant (by email)
-        const { data: existingApplicant } = await supabase
+        const { data: existingApplicant, error: existingError } = await supabase
             .from('applicants')
             .select('id')
             .eq('email', email)
-            .single()
+            .maybeSingle()
+
+        if (existingError) {
+            console.error('Error checking existing applicant:', existingError)
+        }
 
         if (existingApplicant) {
             console.log(`⚠️ Applicant ${email} already exists, skipping`)
@@ -144,7 +207,8 @@ export async function POST(req: Request) {
             console.log(`⚠️ Could not match email to any job: "${subject}"`)
             return NextResponse.json({
                 success: false,
-                message: 'No matching job found for this application'
+                message: 'No matching job found for this application',
+                subject: subject
             }, { status: 422 })
         }
 
@@ -152,10 +216,11 @@ export async function POST(req: Request) {
         let resumeUrl: string | null = null
         const pdfAttachment = attachments.find(a =>
             a.content_type === 'application/pdf' ||
-            a.file_name.toLowerCase().endsWith('.pdf')
+            a.file_name?.toLowerCase().endsWith('.pdf')
         )
 
         if (pdfAttachment) {
+            console.log(`📄 Uploading resume: ${pdfAttachment.file_name}`)
             const fileName = `${Date.now()}-${pdfAttachment.file_name}`
             const filePath = `resumes/${fileName}`
 
@@ -178,15 +243,16 @@ export async function POST(req: Request) {
         }
 
         // Create the applicant record
+        console.log('💾 Creating applicant record...')
         const { data: newApplicant, error: insertError } = await supabase
             .from('applicants')
             .insert({
                 job_id: jobId,
                 name,
                 email,
-                status: 'analyzing', // Start in analyzing state
+                status: 'analyzing',
                 source: 'email',
-                source_detail: 'CloudMailin: 99e40646fb2e27d8b27e@cloudmailin.net',
+                source_detail: 'CloudMailin',
                 email_subject: subject,
                 email_body: plain || html?.replace(/<[^>]*>/g, '') || '',
                 resume_url: resumeUrl,
@@ -206,7 +272,6 @@ export async function POST(req: Request) {
         console.log(`✅ New applicant created: ${newApplicant.id}`)
 
         // Trigger AI evaluation (async - don't wait for it to complete)
-        // This runs in the background so the webhook can return quickly
         evaluateApplicantById(newApplicant.id)
             .then(result => {
                 if (result) {
@@ -230,7 +295,8 @@ export async function POST(req: Request) {
         console.error('Webhook error:', error)
         return NextResponse.json({
             success: false,
-            error: error instanceof Error ? error.message : 'Unknown error'
+            error: error instanceof Error ? error.message : 'Unknown error',
+            stack: error instanceof Error ? error.stack : undefined
         }, { status: 500 })
     }
 }
@@ -239,6 +305,11 @@ export async function POST(req: Request) {
 export async function GET() {
     return NextResponse.json({
         status: 'CloudMailin webhook active',
-        endpoint: '/api/webhooks/incoming-email'
+        endpoint: '/api/webhooks/incoming-email',
+        env_check: {
+            supabase_url: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
+            supabase_key: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+            openai_key: !!process.env.OPENAI_API_KEY
+        }
     })
 }
