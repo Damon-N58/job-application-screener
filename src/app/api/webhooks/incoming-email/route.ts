@@ -75,7 +75,7 @@ async function matchToJob(supabase: ReturnType<typeof getAdminClient>, subject: 
         for (const job of jobs) {
             const titleLower = job.title.toLowerCase()
             // Check if any significant word from title is in subject
-            const titleWords = titleLower.split(' ').filter(w => w.length > 3)
+            const titleWords = titleLower.split(' ').filter((w: string) => w.length > 3)
             for (const word of titleWords) {
                 if (subjectLower.includes(word)) {
                     console.log(`✅ Matched job "${job.title}" via word "${word}"`)
