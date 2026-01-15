@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { evaluateApplicantById, extractApplicantInfo } from '@/lib/ai-evaluation'
+import { evaluateApplicantTask } from '@/trigger/evaluate-applicant'
 
 // Create admin client for server-side operations
 function getAdminClient() {
@@ -284,18 +285,16 @@ export async function POST(req: Request) {
 
         console.log(`✅ New applicant created: ${newApplicant.id}`)
 
-        // Trigger AI evaluation (async - don't wait for it to complete)
-        evaluateApplicantById(newApplicant.id)
-            .then(result => {
-                if (result) {
-                    console.log(`🤖 AI evaluation complete for ${name}: Score ${result.score}`)
-                } else {
-                    console.log(`⚠️ AI evaluation failed for ${name}`)
-                }
-            })
-            .catch(err => {
-                console.error('AI evaluation error:', err)
-            })
+        // Trigger AI evaluation via Trigger.dev (background job)
+        try {
+            const handle = await evaluateApplicantTask.trigger({ applicantId: newApplicant.id })
+            console.log(`🚀 Triggered background evaluation for ${name} (Job ID: ${handle.id})`)
+        } catch (err) {
+            console.error('Failed to trigger background job:', err)
+            // Fallback: try to run it locally if trigger fails (optional, but good for now)
+            console.log('⚠️ Fallback: Running evaluation locally...')
+            evaluateApplicantById(newApplicant.id).catch(e => console.error('Local fallback failed:', e))
+        }
 
         return NextResponse.json({
             success: true,
