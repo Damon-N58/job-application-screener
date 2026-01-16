@@ -1,0 +1,29 @@
+{
+  "configPath": "/Users/damoncarle/Library/Mobile Documents/com~apple~CloudDocs/Nineteen58/JobApplicationScreener/job-application-screener/.trigger/tmp/build-uyiKk6/Library/Mobile Documents/com~apple~CloudDocs/Nineteen58/JobApplicationScreener/job-application-screener/trigger.config.mjs",
+  "customConditions": [
+  ],
+  "queues": [
+  ],
+  "runtime": "node",
+  "runtimeVersion": "22.19.0",
+  "tasks": [
+    {
+      "entryPoint": "/Users/damoncarle/Library/Mobile Documents/com~apple~CloudDocs/Nineteen58/JobApplicationScreener/job-application-screener/.trigger/tmp/build-uyiKk6/Library/Mobile Documents/com~apple~CloudDocs/Nineteen58/JobApplicationScreener/job-application-screener/src/trigger/evaluate-applicant.mjs",
+      "filePath": "src/trigger/evaluate-applicant.ts",
+      "id": "evaluate-applicant",
+      "maxDuration": 300,
+      "retry": {
+        "factor": 2,
+        "maxAttempts": 3,
+        "maxTimeoutInMs": 10000,
+        "minTimeoutInMs": 1000,
+        "randomize": true
+      }
+    }
+  ],
+  "timings": {
+    "src/lib/pdf-parser.ts": 261.351208,
+    "src/trigger/evaluate-applicant.ts": 43.00924999999995
+  },
+  "workerEntryPoint": "/Users/damoncarle/Library/Mobile Documents/com~apple~CloudDocs/Nineteen58/JobApplicationScreener/job-application-screener/.trigger/tmp/build-uyiKk6/.npm/_npx/f51a09bd0abf5f10/node_modules/trigger.dev/dist/esm/entryPoints/dev-run-worker.mjs"
+}
