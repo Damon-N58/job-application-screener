@@ -44495,7 +44495,7 @@ ${applicant.emailBody}
             console.log(`✅ Using signed URL for PDF access`);
           }
         }
-        const { extractTextFromPdfUrl } = await import("../../../../../../../../pdf-parser-C53A46TA.mjs");
+        const { extractTextFromPdfUrl } = await import("../../../../../../../../pdf-parser-M3OKQP7F.mjs");
         const resumeText = await extractTextFromPdfUrl(pdfUrl);
         if (resumeText && resumeText.trim()) {
           candidateContent += `Resume/CV Content:

@@ -17,30 +17,16 @@ export async function extractTextFromPdfUrl(pdfUrl: string): Promise<string | nu
 
         console.log(`📄 PDF downloaded, size: ${buffer.length} bytes`)
 
-        // Try multiple import patterns for pdf-parse compatibility
+        // Import pdf-parse and use the PDFParse named export
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const pdfParseModule = await import('pdf-parse') as any
+        const { PDFParse } = await import('pdf-parse') as any
 
-        // Log what we got for debugging
-        console.log(`📄 pdf-parse module type: ${typeof pdfParseModule}`)
-        console.log(`📄 pdf-parse keys: ${Object.keys(pdfParseModule).join(', ')}`)
-
-        // Try different ways to call the function
-        let pdf: (buffer: Buffer) => Promise<{ text: string; numpages: number }>
-
-        if (typeof pdfParseModule === 'function') {
-            pdf = pdfParseModule
-        } else if (typeof pdfParseModule.default === 'function') {
-            pdf = pdfParseModule.default
-        } else if (typeof pdfParseModule.default?.default === 'function') {
-            pdf = pdfParseModule.default.default
-        } else {
-            // Last resort - maybe it's the module itself
-            console.error(`❌ Could not find pdf-parse function. Module structure:`, JSON.stringify(pdfParseModule, null, 2))
+        if (typeof PDFParse !== 'function') {
+            console.error(`❌ PDFParse is not a function, got: ${typeof PDFParse}`)
             return null
         }
 
-        const data = await pdf(buffer)
+        const data = await PDFParse(buffer)
 
         console.log(`✅ Extracted ${data.text.length} characters from PDF`)
         console.log(`📄 PDF has ${data.numpages} pages`)
