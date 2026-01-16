@@ -17,9 +17,10 @@ export async function extractTextFromPdfUrl(pdfUrl: string): Promise<string | nu
 
         console.log(`📄 PDF downloaded, size: ${buffer.length} bytes`)
 
-        // Dynamic import to handle both ESM and CJS contexts
-        const pdfParseModule = await import('pdf-parse')
-        const pdf = pdfParseModule.default || pdfParseModule
+        // Dynamic import with type assertion to handle ESM/CJS differences
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const pdfParseModule = await import('pdf-parse') as any
+        const pdf = pdfParseModule.default ?? pdfParseModule
 
         const data = await pdf(buffer)
 
