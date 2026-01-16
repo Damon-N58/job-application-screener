@@ -13213,7 +13213,7 @@ ${applicant.emailBody}
             console.log(`✅ Using signed URL for PDF access`);
           }
         }
-        const { extractTextFromPdfUrl } = await import("../../../../../../../../pdf-parser-IFXUFRGW.mjs");
+        const { extractTextFromPdfUrl } = await import("../../../../../../../../pdf-parser-7HNHQOU4.mjs");
         const resumeText = await extractTextFromPdfUrl(pdfUrl);
         if (resumeText && resumeText.trim()) {
           candidateContent += `Resume/CV Content:

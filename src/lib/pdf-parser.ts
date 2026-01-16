@@ -22,7 +22,9 @@ export async function extractTextFromPdfUrl(pdfUrl: string): Promise<string | nu
         console.log(`📄 PDF downloaded, size: ${buffer.length} bytes`)
         console.log(`📄 Sending to GPT-4o for text extraction...`)
 
-        // Use GPT-4o to extract text from the PDF
+        // Use GPT-4o to extract text from the PDF using data URL format
+        const dataUrl = `data:application/pdf;base64,${base64}`
+
         const { text } = await generateText({
             model: openai('gpt-4o'),
             messages: [
@@ -35,8 +37,7 @@ export async function extractTextFromPdfUrl(pdfUrl: string): Promise<string | nu
                         },
                         {
                             type: 'file',
-                            data: base64,
-                            mimeType: 'application/pdf'
+                            data: dataUrl,
                         }
                     ]
                 }
