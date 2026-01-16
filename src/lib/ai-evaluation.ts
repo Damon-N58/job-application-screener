@@ -24,7 +24,7 @@ const EvaluationSchema = z.object({
     mustHavesAnalysis: z.array(z.object({
         requirement: z.string(),
         met: z.boolean(),
-        notes: z.string().optional()
+        notes: z.string().nullable().describe('Notes if applicable, otherwise null')
     })).describe('Analysis of each must-have requirement'),
     niceToHavesAnalysis: z.array(z.object({
         requirement: z.string(),
