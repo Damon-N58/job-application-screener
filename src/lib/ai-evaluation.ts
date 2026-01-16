@@ -124,15 +124,45 @@ export async function evaluateApplicant(
         // Try to extract text from PDF resume
         if (applicant.resumeUrl) {
             console.log('📄 Attempting to extract text from resume PDF...')
-            const { extractTextFromPdfUrl } = await import('./pdf-parser')
-            const resumeText = await extractTextFromPdfUrl(applicant.resumeUrl)
 
-            if (resumeText && resumeText.trim()) {
-                candidateContent += `Resume/CV Content:\n${resumeText}\n\n`
-                console.log(`✅ Added ${resumeText.length} characters from resume`)
-            } else {
-                candidateContent += `Note: A resume PDF was attached but could not be parsed. Please evaluate based on the email content.\n`
-                console.log('⚠️ Could not extract text from resume PDF')
+            try {
+                // For private buckets, we need to create a signed URL
+                // Extract the file path from the full URL
+                const urlParts = applicant.resumeUrl.split('/storage/v1/object/public/')
+                let pdfUrl = applicant.resumeUrl
+
+                if (urlParts.length === 2) {
+                    // It's a Supabase storage URL - create a signed URL for access
+                    const [bucketAndPath] = urlParts[1].split('/')
+                    const filePath = urlParts[1].substring(bucketAndPath.length + 1)
+
+                    console.log(`📄 Creating signed URL for: ${filePath}`)
+
+                    const { data: signedData, error: signedError } = await supabase.storage
+                        .from('resumes')
+                        .createSignedUrl(filePath, 3600) // 1 hour expiry
+
+                    if (signedError) {
+                        console.error('❌ Error creating signed URL:', signedError)
+                    } else if (signedData?.signedUrl) {
+                        pdfUrl = signedData.signedUrl
+                        console.log(`✅ Using signed URL for PDF access`)
+                    }
+                }
+
+                const { extractTextFromPdfUrl } = await import('./pdf-parser')
+                const resumeText = await extractTextFromPdfUrl(pdfUrl)
+
+                if (resumeText && resumeText.trim()) {
+                    candidateContent += `Resume/CV Content:\n${resumeText}\n\n`
+                    console.log(`✅ Added ${resumeText.length} characters from resume`)
+                } else {
+                    candidateContent += `Note: A resume PDF was attached but could not be parsed. Please evaluate based on the email content.\n`
+                    console.log('⚠️ Could not extract text from resume PDF')
+                }
+            } catch (pdfError) {
+                console.error('❌ Error processing PDF:', pdfError)
+                candidateContent += `Note: A resume PDF was attached but could not be processed. Please evaluate based on the email content.\n`
             }
         }
 

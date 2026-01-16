@@ -44480,18 +44480,38 @@ ${applicant.emailBody}
     }
     if (applicant.resumeUrl) {
       console.log("📄 Attempting to extract text from resume PDF...");
-      const { extractTextFromPdfUrl } = await import("../../../../../../../../pdf-parser-ZS34CMHQ.mjs");
-      const resumeText = await extractTextFromPdfUrl(applicant.resumeUrl);
-      if (resumeText && resumeText.trim()) {
-        candidateContent += `Resume/CV Content:
+      try {
+        const urlParts = applicant.resumeUrl.split("/storage/v1/object/public/");
+        let pdfUrl = applicant.resumeUrl;
+        if (urlParts.length === 2) {
+          const [bucketAndPath] = urlParts[1].split("/");
+          const filePath = urlParts[1].substring(bucketAndPath.length + 1);
+          console.log(`📄 Creating signed URL for: ${filePath}`);
+          const { data: signedData, error: signedError } = await supabase.storage.from("resumes").createSignedUrl(filePath, 3600);
+          if (signedError) {
+            console.error("❌ Error creating signed URL:", signedError);
+          } else if (signedData?.signedUrl) {
+            pdfUrl = signedData.signedUrl;
+            console.log(`✅ Using signed URL for PDF access`);
+          }
+        }
+        const { extractTextFromPdfUrl } = await import("../../../../../../../../pdf-parser-ZS34CMHQ.mjs");
+        const resumeText = await extractTextFromPdfUrl(pdfUrl);
+        if (resumeText && resumeText.trim()) {
+          candidateContent += `Resume/CV Content:
 ${resumeText}
 
 `;
-        console.log(`✅ Added ${resumeText.length} characters from resume`);
-      } else {
-        candidateContent += `Note: A resume PDF was attached but could not be parsed. Please evaluate based on the email content.
+          console.log(`✅ Added ${resumeText.length} characters from resume`);
+        } else {
+          candidateContent += `Note: A resume PDF was attached but could not be parsed. Please evaluate based on the email content.
 `;
-        console.log("⚠️ Could not extract text from resume PDF");
+          console.log("⚠️ Could not extract text from resume PDF");
+        }
+      } catch (pdfError) {
+        console.error("❌ Error processing PDF:", pdfError);
+        candidateContent += `Note: A resume PDF was attached but could not be processed. Please evaluate based on the email content.
+`;
       }
     }
     if (!candidateContent.trim()) {
