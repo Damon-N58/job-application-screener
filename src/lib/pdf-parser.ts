@@ -17,21 +17,18 @@ export async function extractTextFromPdfUrl(pdfUrl: string): Promise<string | nu
 
         console.log(`📄 PDF downloaded, size: ${buffer.length} bytes`)
 
-        // Import pdf-parse and use the PDFParse named export
+        // Import pdf-parse and use PDFParse as a class
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { PDFParse } = await import('pdf-parse') as any
 
-        if (typeof PDFParse !== 'function') {
-            console.error(`❌ PDFParse is not a function, got: ${typeof PDFParse}`)
-            return null
-        }
+        // PDFParse is a class - instantiate it and call parse method
+        const parser = new PDFParse()
+        const data = await parser.loadPDF(buffer)
 
-        const data = await PDFParse(buffer)
+        console.log(`✅ Extracted ${data.text?.length || 0} characters from PDF`)
+        console.log(`📄 PDF has ${data.numpages || 'unknown'} pages`)
 
-        console.log(`✅ Extracted ${data.text.length} characters from PDF`)
-        console.log(`📄 PDF has ${data.numpages} pages`)
-
-        return data.text
+        return data.text || null
     } catch (error) {
         console.error('❌ Error extracting PDF text:', error)
         return null
