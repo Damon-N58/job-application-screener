@@ -47,9 +47,11 @@ function parseFromAddress(from: string): { name: string; email: string } {
     }
 }
 
-// Try to match email subject to a job - LENIENT: any email is an application
-async function matchToJob(supabase: ReturnType<typeof getAdminClient>, subject: string) {
-    console.log('🔍 Looking for matching job for subject:', subject)
+// Try to match email to a job using subject AND body content
+async function matchToJob(supabase: ReturnType<typeof getAdminClient>, subject: string, emailBody: string) {
+    console.log('🔍 Looking for matching job...')
+    console.log('📧 Subject:', subject)
+    console.log('📧 Body preview:', emailBody?.substring(0, 200))
 
     // Get all active jobs
     const { data: jobs, error } = await supabase
@@ -70,27 +72,67 @@ async function matchToJob(supabase: ReturnType<typeof getAdminClient>, subject: 
         return null
     }
 
-    // Try to match by subject first (if subject exists and is meaningful)
-    if (subject && subject !== 'No Subject' && subject.length > 3) {
-        const subjectLower = subject.toLowerCase()
-        for (const job of jobs) {
-            const titleLower = job.title.toLowerCase()
-            // Check if any significant word from title is in subject
-            const titleWords = titleLower.split(' ').filter((w: string) => w.length > 3)
-            for (const word of titleWords) {
-                if (subjectLower.includes(word)) {
-                    console.log(`✅ Matched job "${job.title}" via word "${word}"`)
-                    return job.id
-                }
+    // Combine subject and body for comprehensive search
+    const searchText = `${subject || ''} ${emailBody || ''}`.toLowerCase()
+
+    // Score each job by how well it matches
+    const jobScores: { job: typeof jobs[0]; score: number }[] = []
+
+    for (const job of jobs) {
+        let score = 0
+        const titleLower = job.title.toLowerCase()
+        const titleWords = titleLower.split(' ').filter((w: string) => w.length > 2)
+
+        // Check for exact title match (highest score)
+        if (searchText.includes(titleLower)) {
+            score += 100
+            console.log(`🎯 Exact title match for "${job.title}"`)
+        }
+
+        // Check for individual meaningful words
+        for (const word of titleWords) {
+            if (searchText.includes(word)) {
+                score += 10
             }
         }
+
+        // Special checks for common role variations
+        if (titleLower.includes('software') && (searchText.includes('software') || searchText.includes('developer') || searchText.includes('programmer'))) {
+            score += 20
+        }
+        if (titleLower.includes('engineer') && searchText.includes('engineer')) {
+            score += 20
+        }
+        if (titleLower.includes('cto') && (searchText.includes('cto') || searchText.includes('chief technology'))) {
+            score += 20
+        }
+
+        jobScores.push({ job, score })
     }
 
-    // LENIENT: If no subject match, default to the most recent active job
-    // ALL emails to this address are job applications
-    console.log(`📌 Defaulting to most recent job: ${jobs[0].title}`)
+    // Sort by score descending
+    jobScores.sort((a, b) => b.score - a.score)
+
+    // Normalize scores to 0-100 scale (max raw score is ~130)
+    const maxPossibleScore = 130
+    const normalizedScores = jobScores.map(js => ({
+        ...js,
+        normalizedScore: Math.min(100, Math.round((js.score / maxPossibleScore) * 100))
+    }))
+
+    console.log('📊 Job match scores:', normalizedScores.map(js => `${js.job.title}: ${js.normalizedScore}/100`))
+
+    // Return best match if it has a meaningful score
+    if (jobScores[0].score > 0) {
+        console.log(`✅ Best match: "${jobScores[0].job.title}" (score: ${jobScores[0].score})`)
+        return jobScores[0].job.id
+    }
+
+    // LENIENT: If no matches, default to most recent job
+    console.log(`📌 No match found, defaulting to most recent job: ${jobs[0].title}`)
     return jobs[0].id
 }
+
 
 export async function POST(req: Request) {
     console.log('📧 CloudMailin webhook received')
@@ -214,8 +256,8 @@ export async function POST(req: Request) {
             })
         }
 
-        // Try to match to a job
-        const jobId = await matchToJob(supabase, subject)
+        // Try to match to a job (uses both subject and body for matching)
+        const jobId = await matchToJob(supabase, subject, plain)
 
         if (!jobId) {
             console.log(`⚠️ Could not match email to any job: "${subject}"`)

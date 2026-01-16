@@ -116,14 +116,24 @@ export async function evaluateApplicant(
         // Build the content for evaluation
         let candidateContent = ''
 
-        // Add email body - this is the main content we can process
+        // Add email body
         if (applicant.emailBody && applicant.emailBody.trim()) {
             candidateContent += `Application Email Content:\n${applicant.emailBody}\n\n`
         }
 
-        // Note about resume - we can't fetch URLs from OpenAI
+        // Try to extract text from PDF resume
         if (applicant.resumeUrl) {
-            candidateContent += `Note: A resume PDF was attached but cannot be analyzed directly. Please evaluate based on the email content.\n`
+            console.log('📄 Attempting to extract text from resume PDF...')
+            const { extractTextFromPdfUrl } = await import('./pdf-parser')
+            const resumeText = await extractTextFromPdfUrl(applicant.resumeUrl)
+
+            if (resumeText && resumeText.trim()) {
+                candidateContent += `Resume/CV Content:\n${resumeText}\n\n`
+                console.log(`✅ Added ${resumeText.length} characters from resume`)
+            } else {
+                candidateContent += `Note: A resume PDF was attached but could not be parsed. Please evaluate based on the email content.\n`
+                console.log('⚠️ Could not extract text from resume PDF')
+            }
         }
 
         if (!candidateContent.trim()) {
